@@ -129,7 +129,17 @@
 
   var ctx = null, stream = null, source = null, proc = null, chunks = [];
   var recording = false, startedAt = 0, timer = null;
-  var raw = null, rate = 48000, fx = null, fxKey = '', player = null;
+  var raw = null, rate = 48000, fx = null, fxKey = '';
+  // Playback goes through an <audio> element, not Web Audio: iOS mutes Web Audio
+  // when the ringer switch is on silent, but plays media elements regardless.
+  var audioEl = new Audio(), audioUrl = null, audioLabel = '';
+  audioEl.setAttribute('playsinline', '');
+  audioEl.onended = function () { if (audioLabel && !recording) setStatus('Tap ▶ to hear it again.'); };
+  audioEl.onplaying = function () { if (audioLabel) setStatus('Playing ' + audioLabel + '…'); };
+
+  function setAudioSession(type) {
+    try { if (navigator.audioSession) navigator.audioSession.type = type; } catch (e) {}
+  }
 
   function showVals() {
     $('formantVal').textContent = '×' + Number(formant.value).toFixed(2);
@@ -148,6 +158,11 @@
 
   async function startRecording() {
     stopPlayback();
+    // Play a silent clip inside this tap so iOS lets us autoplay the result later.
+    audioLabel = '';
+    audioEl.src = toWavUrl(new Float32Array(800), 8000);
+    audioEl.play().catch(function () {});
+    setAudioSession('play-and-record');
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setStatus('This browser can’t use the microphone. The page must be opened over https.');
       return;
@@ -200,6 +215,8 @@
     proc.onaudioprocess = null;
     // Releasing the mic lets iOS route playback to the loudspeaker, not the earpiece.
     stream.getTracks().forEach(function (t) { t.stop(); });
+    if (ctx) { ctx.close().catch(function () {}); ctx = null; }
+    setAudioSession('playback');
     micBtn.classList.remove('recording');
     micBtn.setAttribute('aria-label', 'Start recording');
     micLabel.textContent = 'Tap to talk';
@@ -225,28 +242,25 @@
   }
 
   function stopPlayback() {
-    if (player) { try { player.stop(); } catch (e) {} player = null; }
+    audioEl.pause();
   }
 
+  function toWavUrl(samples, sr) {
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    audioUrl = URL.createObjectURL(toWav(samples, sr));
+    return audioUrl;
+  }
+
+  // Called synchronously from taps so iOS treats playback as user-initiated.
   function play(samples, label) {
     stopPlayback();
-    var ac = getCtx();
-    ac.resume();
-    var buf = ac.createBuffer(1, samples.length, rate);
-    buf.getChannelData(0).set(samples);
-    var node = ac.createBufferSource();
-    node.buffer = buf;
-    node.connect(ac.destination);
-    node.onended = function () { if (player === node) { player = null; setStatus('Tap ▶ to hear it again.'); } };
-    node.start();
-    player = node;
-    setStatus('Playing ' + label + '…');
+    audioLabel = label;
+    audioEl.src = toWavUrl(samples, rate);
+    audioEl.play().catch(function () { setStatus('Tap ▶ Helium to play.'); });
   }
 
   function playProcessed() {
-    setStatus('Adding helium…');
-    // Let the status paint before the (short) processing blocks the thread.
-    setTimeout(function () { play(processed(), 'helium voice'); }, 30);
+    play(processed(), 'helium voice');
   }
 
   function toWav(samples, sr) {
