@@ -127,12 +127,6 @@
     return x[i] + (x[i + 1] - x[i]) * fr;
   }
 
-  function rmsOf(x) {
-    var s = 0;
-    for (var i = 0; i < x.length; i++) s += x[i] * x[i];
-    return Math.sqrt(s / Math.max(1, x.length));
-  }
-
   // x: Float32Array mono samples. Options:
   //   formant: how far to push resonances up (1 = none, ~1.7 = helium)
   //   pitch:   pitch multiplier (1 = unchanged)
@@ -169,16 +163,33 @@
       tOut += isVoiced ? P / pitch : P;
     }
 
-    // Match loudness to the input, and keep peaks under full scale.
-    var rIn = rmsOf(x), rOut = rmsOf(out);
-    var scale = rOut > 0 ? rIn / rOut : 0;
-    var peak = 0;
-    for (var k = 0; k < n; k++) { out[k] *= scale; var ab = Math.abs(out[k]); if (ab > peak) peak = ab; }
-    if (peak > 0.98) for (var z = 0; z < n; z++) out[z] *= 0.98 / peak;
+    return loudness(out, sr);
+  }
+
+  // Bring speech up to a strong, consistent playback level. Phone mics often
+  // record quietly, so level on the loudest 30% of 20 ms blocks (the speech,
+  // not the pauses), then soft-clip with tanh so peaks never distort harshly.
+  function loudness(x, sr) {
+    var n = x.length, out = new Float32Array(n);
+    var block = Math.max(1, Math.round(sr * 0.02));
+    var energies = [];
+    for (var b = 0; b + block <= n; b += block) {
+      var e = 0;
+      for (var i = b; i < b + block; i++) e += x[i] * x[i];
+      energies.push(e / block);
+    }
+    if (!energies.length) return out;
+    energies.sort(function (u, v) { return v - u; });
+    var top = Math.max(1, Math.round(energies.length * 0.3)), sum = 0;
+    for (var t = 0; t < top; t++) sum += energies[t];
+    var speechRms = Math.sqrt(sum / top);
+    if (speechRms <= 0) return out;
+    var gain = Math.min(0.3 / speechRms, 40);
+    for (var k = 0; k < n; k++) out[k] = Math.tanh(x[k] * gain);
     return out;
   }
 
-  var api = { helium: helium, detectPitch: detectPitch };
+  var api = { helium: helium, detectPitch: detectPitch, loudness: loudness };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Helium = api;
 })(this);

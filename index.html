@@ -129,7 +129,7 @@
 
   var ctx = null, stream = null, source = null, proc = null, chunks = [];
   var recording = false, startedAt = 0, timer = null;
-  var raw = null, rate = 48000, fx = null, fxKey = '';
+  var raw = null, rawLoud = null, rate = 48000, fx = null, fxKey = '';
   // Playback goes through an <audio> element, not Web Audio: iOS mutes Web Audio
   // when the ringer switch is on silent, but plays media elements regardless.
   var audioEl = new Audio(), audioUrl = null, audioLabel = '';
@@ -162,7 +162,6 @@
     audioLabel = '';
     audioEl.src = toWavUrl(new Float32Array(800), 8000);
     audioEl.play().catch(function () {});
-    setAudioSession('play-and-record');
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setStatus('This browser can’t use the microphone. The page must be opened over https.');
       return;
@@ -227,9 +226,12 @@
     var off = 0;
     chunks.forEach(function (c) { raw.set(c, off); off += c.length; });
     chunks = [];
-    fx = null; fxKey = '';
+    fx = null; fxKey = ''; rawLoud = null;
     playFx.disabled = playOrig.disabled = saveBtn.disabled = false;
-    playProcessed();
+    setStatus('Adding helium…');
+    processed();
+    // Give iOS a moment to release the mic and switch back to the loudspeaker.
+    setTimeout(playProcessed, 400);
   }
 
   function processed() {
@@ -295,7 +297,10 @@
 
   micBtn.onclick = function () { recording ? stopRecording() : startRecording(); };
   playFx.onclick = playProcessed;
-  playOrig.onclick = function () { play(raw, 'original'); };
+  playOrig.onclick = function () {
+    if (!rawLoud) rawLoud = Helium.loudness(raw, rate);
+    play(rawLoud, 'original');
+  };
   saveBtn.onclick = save;
 })();
 </script>
