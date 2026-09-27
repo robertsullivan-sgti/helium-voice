@@ -128,7 +128,7 @@
   var formant = $('formant'), pitch = $('pitch');
 
   var ctx = null, stream = null, source = null, proc = null, chunks = [];
-  var recording = false, startedAt = 0, timer = null;
+  var recording = false, starting = false, startedAt = 0, timer = null;
   var raw = null, rawLoud = null, rate = 48000, fx = null, fxKey = '';
   // Playback goes through an <audio> element, not Web Audio: iOS mutes Web Audio
   // when the ringer switch is on silent, but plays media elements regardless.
@@ -166,16 +166,28 @@
       setStatus('This browser can’t use the microphone. The page must be opened over https.');
       return;
     }
+    if (starting) return;
+    starting = true;
+    // Ask for the mic straight away, while Safari still counts this as part of
+    // the tap. Waiting on anything first can make Safari refuse the request.
+    var micRequest = navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true }
+    });
     var ac = getCtx();
-    await ac.resume();
+    var resumed = ac.resume();
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true }
-      });
+      stream = await micRequest;
+      await resumed;
     } catch (e) {
-      setStatus('Microphone blocked. Allow mic access for this site and try again.');
+      starting = false;
+      if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
+        setStatus('Mic access was denied. In Safari tap “aA” → Website Settings → Microphone → Allow, then try again.');
+      } else {
+        setStatus('Couldn’t start the mic (' + (e && e.name || 'error') + '). Please try again.');
+      }
       return;
     }
+    starting = false;
     rate = ac.sampleRate;
     chunks = [];
     source = ac.createMediaStreamSource(stream);
