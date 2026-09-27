@@ -137,9 +137,9 @@
   audioEl.onended = function () { if (audioLabel && !recording) setStatus('Tap ▶ to hear it again.'); };
   audioEl.onplaying = function () { if (audioLabel) setStatus('Playing ' + audioLabel + '…'); };
 
-  function setAudioSession(type) {
-    try { if (navigator.audioSession) navigator.audioSession.type = type; } catch (e) {}
-  }
+  // Leave iOS to pick the audio mode itself. Forcing 'playback' makes the next
+  // mic request fail with InvalidStateError; this resets any page that did.
+  try { if (navigator.audioSession) navigator.audioSession.type = 'auto'; } catch (e) {}
 
   function showVals() {
     $('formantVal').textContent = '×' + Number(formant.value).toFixed(2);
@@ -177,8 +177,16 @@
     var resumed = ac.resume();
     try {
       stream = await micRequest;
-      await resumed;
+      try {
+        await resumed;
+      } catch (e) {
+        // A stale audio context can't resume on iOS; start a fresh one.
+        ctx = null;
+        ac = getCtx();
+        await ac.resume();
+      }
     } catch (e) {
+      if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
       starting = false;
       if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
         setStatus('Mic access was denied. In Safari tap “aA” → Website Settings → Microphone → Allow, then try again.');
@@ -227,7 +235,6 @@
     // Releasing the mic lets iOS route playback to the loudspeaker, not the earpiece.
     stream.getTracks().forEach(function (t) { t.stop(); });
     if (ctx) { ctx.close().catch(function () {}); ctx = null; }
-    setAudioSession('playback');
     micBtn.classList.remove('recording');
     micBtn.setAttribute('aria-label', 'Start recording');
     micLabel.textContent = 'Tap to talk';
